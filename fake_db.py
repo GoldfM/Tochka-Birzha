@@ -35,8 +35,8 @@ orderbooks_history: Dict[str, OrderBook] = {
 balances_history: Dict[str, Dict[str, int]] = {}
 users_history: Dict[int, User] = {}
 
-def generate_user_id() -> str:
+def generate_user_id() -> int:
     if users_history:
-        return str(max([int(k) for k in users_history.keys()]) + 1)
+        return max([k for k in users_history.keys()]) + 1
     else:
-        return "1"
+        return 1

@@ -21,10 +21,10 @@ class UserNameNew(BaseModel):
     name: str
 
 class User(BaseModel):
-    id: UUID
+    id: int
     name: str
     role: Role = Role.USER
-    api_key: str
+    api_key: UUID
 
 class Level(BaseModel):
     price: int
@@ -82,3 +82,7 @@ class MarketOrder(BaseModel):
     trader_id: UUID
     created_at: str
     details: MarketOrderRequest
+
+class StatusMessage(BaseModel):
+    status: bool
+    
