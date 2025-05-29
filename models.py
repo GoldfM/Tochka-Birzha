@@ -31,8 +31,13 @@ class Level(BaseModel):
     qty: int
 
 class OrderBook(BaseModel):
-    bid_levels: List[Level]
-    ask_levels: List[Level]
+    buy_levels: List[Level]
+    sell_levels: List[Level]
+class Instrument(BaseModel):
+    name: str
+    ticker: str
+
+
 
 class Transaction(BaseModel):
     ticker: str
@@ -40,12 +45,12 @@ class Transaction(BaseModel):
     price: int
     timestamp: str
 
-class BalanceUp(BaseModel):
+class BalanceDown(BaseModel):
     id: UUID
     ticker: str
     amount: int
 
-class BalanceDown(BaseModel):
+class BalanceUp(BaseModel):
     id: UUID
     ticker: str
     amount: int
