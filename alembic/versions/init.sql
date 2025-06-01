@@ -27,13 +27,6 @@ CREATE TABLE if not exists transactions (
                               timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create Deposit Requests TABLE if not exists
-CREATE TABLE if not exists deposit (
-                                  id UUID PRIMARY KEY,
-                                  ticker VARCHAR(10) NOT NULL REFERENCES instruments(ticker) ON DELETE CASCADE,
-                                  amount INT NOT NULL CHECK (amount > 0)
-);
-
 -- Create Withdraw Requests TABLE if not exists
 CREATE TABLE if not exists withdraw (
                                    id UUID PRIMARY KEY,

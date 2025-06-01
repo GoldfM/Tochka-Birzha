@@ -15,10 +15,9 @@ async def delete_user(
     user: User_db = Depends(validate_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    user_result = await db.execute(
+    user = await db.scalar(
         select(User_db).where(User_db.id == user_id)
     )
-    user = user_result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 

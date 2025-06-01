@@ -1,91 +1,97 @@
 from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from uuid import uuid4
+from typing import List
 from app.models import NewUser, User, Instrument, L2OrderBook, Transaction, Level
 from app.models_DB.users import User_db
 from app.models_DB.instruments import Instrument_db
 from app.models_DB.transactions import Transaction_db
 from app.models_DB.orderbook import OrderBook_db
 from app.db_manager import get_db
-from sqlalchemy import select
-from uuid import uuid4
-from typing import List
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/public", tags=["public"])
 
+
+async def _check_instrument_exists(ticker: str, db: AsyncSession):
+    query = select(Instrument_db).where(Instrument_db.ticker == ticker)
+    result = await db.execute(query)
+    return result.first()
+
+
 @router.post("/register", response_model=User)
-async def register(new_user: NewUser, db: AsyncSession = Depends(get_db)):
-    existing_user = await db.execute(select(User_db).where(User_db.name == new_user.name))
-    existing_user = existing_user.scalar_one_or_none()
+async def user_registration(new_user_data: NewUser, db_session: AsyncSession = Depends(get_db)):
+    user_query = select(User_db).where(User_db.name == new_user_data.name)
+    existing = (await db_session.execute(user_query)).first()
 
-    if existing_user:
-        return existing_user
+    if existing:
+        return existing
 
-    user_id = uuid4()
-    api_key = f"{uuid4()}"
+    new_user = User_db(
+        id=uuid4(),
+        name=new_user_data.name,
+        role="USER",
+        api_key=f"{uuid4()}"
+    )
 
-    user = User_db(id=user_id, name=new_user.name, role="USER", api_key=api_key)
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
+    db_session.add(new_user)
+    await db_session.commit()
+    await db_session.refresh(new_user)
 
-    return user
+    return new_user
+
 
 @router.get("/instrument", response_model=List[Instrument])
-async def list_instruments(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Instrument_db))
-    instruments = result.scalars().all()   
+async def fetch_all_instruments(database: AsyncSession = Depends(get_db)):
+    query_result = await database.execute(select(Instrument_db))
+    return query_result.scalars().all()
 
-    return instruments
 
 @router.get("/orderbook/{ticker}", response_model=L2OrderBook)
-async def get_orderbook(ticker: str, limit: int = 10, db: AsyncSession = Depends(get_db)):
-    instrument_result = await db.execute(
-        select(Instrument_db).where(Instrument_db.ticker == ticker)
-    )
-
-    instrument = instrument_result.scalar_one_or_none()
-    if not instrument:
+async def fetch_orderbook_data(
+        ticker: str,
+        depth: int = 10,
+        db_connection: AsyncSession = Depends(get_db)
+):
+    if not await _check_instrument_exists(ticker, db_connection):
         raise HTTPException(status_code=422, detail="Instrument not found")
 
-    orderbook_result = await db.execute(
-        select(OrderBook_db).where(OrderBook_db.ticker == ticker)
-    )
+    orderbook_query = select(OrderBook_db).where(OrderBook_db.ticker == ticker)
+    orderbook_data = (await db_connection.execute(orderbook_query)).first()
 
-    orderbook = orderbook_result.scalar_one_or_none()
-    if not orderbook:
+    if not orderbook_data:
         raise HTTPException(status_code=404, detail="Orderbook not found")
 
     return L2OrderBook(
-        bid_levels=[Level(**level) for level in orderbook.buy_levels][:limit],
-        ask_levels=[Level(**level) for level in orderbook.sell_levels][:limit],
+        bid_levels=[Level(**l) for l in orderbook_data.buy_levels][:depth],
+        ask_levels=[Level(**l) for l in orderbook_data.sell_levels][:depth],
     )
+
 
 @router.get("/transactions/{ticker}", response_model=List[Transaction])
-async def get_transaction_history(ticker: str, limit: int = 10, db: AsyncSession = Depends(get_db)):
-    instrument_result = await db.execute(
-        select(Instrument_db).where(Instrument_db.ticker == ticker)
-    )
-
-    instrument = instrument_result.scalar_one_or_none()
-    if not instrument:
+async def retrieve_transaction_history(
+        ticker: str,
+        max_results: int = 10,
+        db: AsyncSession = Depends(get_db)
+):
+    if not await _check_instrument_exists(ticker, db):
         raise HTTPException(status_code=422, detail="Instrument not found")
 
-    transactions_result = await db.execute(
+    history_query = (
         select(Transaction_db)
         .where(Transaction_db.ticker == ticker)
         .order_by(Transaction_db.timestamp.desc())
-        .limit(limit)
+        .limit(max_results)
     )
-    transactions = transactions_result.scalars().all()
 
-    response = [
+    transactions = (await db.execute(history_query)).scalars().all()
+
+    return [
         Transaction(
-            ticker=transaction.ticker,
-            amount=transaction.amount,
-            price=transaction.price,
-            timestamp=transaction.timestamp.isoformat()
+            ticker=t.ticker,
+            amount=t.amount,
+            price=t.price,
+            timestamp=t.timestamp.isoformat()
         )
-        for transaction in transactions
+        for t in transactions
     ]
-
-    return response

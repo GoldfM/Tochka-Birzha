@@ -1,39 +1,37 @@
-import datetime
 from typing import List, Union
 from fastapi import APIRouter, HTTPException, Depends
+from uuid import uuid4, UUID
 from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime
 from sqlalchemy import select
 from app.models_DB.users import User_db
 from app.models_DB.limit_orders import LimitOrder_db
 from app.models_DB.market_orders import MarketOrder_db
 from app.models import LimitOrderRequest, LimitOrder, MarketOrder, MarketOrderRequest, CreateOrderResponse, Direction, OrderState, Ok
 from app.db_manager import get_db
-from uuid import uuid4, UUID
 from app.tools import verify_auth_token
 
 router = APIRouter(prefix="/order", tags=["order"])
 
-@router.post("/", response_model=CreateOrderResponse)
+@router.post("/", responses={200: {"model": CreateOrderResponse}})
 async def create_order(
     order_body: LimitOrderRequest | MarketOrderRequest,
     api_key: str = Depends(verify_auth_token),
     db: AsyncSession = Depends(get_db)
 ):
-    user_result = await db.execute(
+    user= await db.scalar(
         select(User_db).where(User_db.api_key == api_key)
     )
-
-    user = user_result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="User account not found")
 
     order_id = uuid4()
     if isinstance(order_body, LimitOrderRequest):
         order = LimitOrder_db(
             id=order_id,
-            status="NEW",
+            status=OrderState.NEW,
             user_id=user.id,
-            timestamp=datetime.datetime.now(),
+            timestamp=datetime.now(),
             direction=order_body.direction,
             ticker=order_body.ticker,
             qty=order_body.qty,
@@ -43,9 +41,9 @@ async def create_order(
     else:
         order = MarketOrder_db(
             id=order_id,
-            status="NEW",
+            status=OrderState.NEW,
             user_id=user.id,
-            timestamp=datetime.datetime.now(),
+            timestamp=datetime.now(),
             direction=order_body.direction,
             ticker=order_body.ticker,
             qty=order_body.qty
@@ -61,11 +59,9 @@ async def list_orders(
     api_key: str = Depends(verify_auth_token),
     db: AsyncSession = Depends(get_db)
 ):
-    user_result = await db.execute(
+    user = await db.scalar(
         select(User_db).where(User_db.api_key == api_key)
     )
-
-    user = user_result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -116,22 +112,19 @@ async def cancel_order(
     api_key: str = Depends(verify_auth_token),
     db: AsyncSession = Depends(get_db)
 ):
-    user_result = await db.execute(
+    user = await db.scalar(
         select(User_db).where(User_db.api_key == api_key)
     )
-    user = user_result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    limit_order_result = await db.execute(
+    limit_order = await db.scalar(
         select(LimitOrder_db).where(LimitOrder_db.id == order_id)
     )
-    limit_order = limit_order_result.scalar_one_or_none()
 
-    market_order_result = await db.execute(
+    market_order= await db.scalar(
         select(MarketOrder_db).where(MarketOrder_db.id == order_id)
     )
-    market_order = market_order_result.scalar_one_or_none()
 
     if limit_order:
         if user.id != limit_order.user_id:
@@ -157,23 +150,20 @@ async def get_order(
     api_key: str = Depends(verify_auth_token),
     db: AsyncSession = Depends(get_db)
 ):
-    user_result = await db.execute(
+    user= await db.scalar(
         select(User_db).where(User_db.api_key == api_key)
     )
 
-    user = user_result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    limit_order_result = await db.execute(
+    limit_order = await db.scalar(
         select(LimitOrder_db).where(LimitOrder_db.id == order_id)
     )
-    limit_order = limit_order_result.scalar_one_or_none()
 
-    market_order_result = await db.execute(
+    market_order = await db.scalar(
         select(MarketOrder_db).where(MarketOrder_db.id == order_id)
     )
-    market_order = market_order_result.scalar_one_or_none()
 
     if limit_order:
         if limit_order.user_id != user.id:

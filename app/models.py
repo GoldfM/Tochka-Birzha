@@ -8,10 +8,10 @@ class Role(Enum):
     ADMIN = "ADMIN"
 
 class OrderState(str, Enum):
-    CREATED = "CREATED"
-    FILLED = "FILLED"
-    PARTIALLY_FILLED = "PARTIALLY_FILLED"
-    CANCELED = "CANCELED"
+    NEW = "NEW"
+    EXECUTED = "EXECUTED"
+    PARTIALLY_EXECUTED = "PARTIALLY_EXECUTED"
+    CANCELLED = "CANCELLED"
 
 class Direction(str, Enum):
     BUY = "BUY"
@@ -60,14 +60,14 @@ class Body_deposit_api_v1_admin_balance_deposit_post(BaseModel):
 
 class LimitOrderRequest(BaseModel):
     direction: Direction
-    symbol: str
-    quantity: int
-    limit_price: int
+    ticker: str
+    qty: int
+    price: int
 
 class MarketOrderRequest(BaseModel):
     direction: Direction
-    symbol: str
-    quantity: int
+    ticker: str
+    qty: int
 
 
 class CreateOrderResponse(BaseModel):

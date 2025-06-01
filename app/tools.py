@@ -21,10 +21,10 @@ async def fetch_authenticated_user(
         session: AsyncSession = Depends(get_db),
         token: str = Depends(verify_auth_token)
 ):
-    result = await session.execute(
+    user = await session.scalar(
         select(User_db).where(User_db.api_key == token)
     )
-    user = result.scalar_one_or_none()
+
 
     if user is None:
         raise HTTPException(

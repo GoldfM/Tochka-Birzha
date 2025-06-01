@@ -10,7 +10,7 @@ from app.routers.public_router import router as public_router
 from app.routers.balance_router import router as balance_router
 from app.routers.balance_router import admin_router as admin_balance_router
 from app.routers.order_router import router as order_router
-from app.routers.admin_router import router as admin_router
+from app.routers.admin_router import admin_router as admin_router
 from app.routers.user_router import router as user_router
 
 app = FastAPI()
@@ -35,12 +35,12 @@ def get_model_schema(model):
             "unique": column.unique,
         }
     return schema
-from app.models_DB import (User, Balance, Deposit, Instrument,
+from app.models_DB import (User, Balance, Instrument,
     LimitOrder, MarketOrder, OrderReq,
     OrderBook, Withdraw, Transaction
 )
 
-all_models = [User, Balance, Deposit, Instrument, LimitOrder,
+all_models = [User, Balance, Instrument, LimitOrder,
               MarketOrder, OrderReq, OrderBook, Withdraw, Transaction]
 
 db_schemas = {}

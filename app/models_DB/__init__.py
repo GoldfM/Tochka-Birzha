@@ -1,6 +1,5 @@
 from .users import User_db as User
 from .balances import Balance_db as Balance
-from .deposit import Deposit_db as Deposit
 from .instruments import Instrument_db as Instrument
 from .limit_orders import LimitOrder_db as LimitOrder
 from .market_orders import MarketOrder_db as MarketOrder
@@ -13,7 +12,6 @@ from .transactions import Transaction_db as Transaction
 __all__ = [
     'User',
     'Balance',
-    'Deposit',
     'Instrument',
     'LimitOrder',
     'MarketOrder',
