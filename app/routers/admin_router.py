@@ -3,13 +3,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from app.models_DB.instruments import Instrument_db
 from app.models_DB.users import User_db
-from app.models import Instrument as InstrumentSchema, StatusMessage
+from app.models import Instrument as InstrumentSchema, Ok
 from app.db_manager import get_db
 from app.tools import validate_admin
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-@router.post("/instrument", response_model=StatusMessage)
+@router.post("/instrument", response_model=Ok)
 async def add_instrument(
     instrument: InstrumentSchema,
     user: User_db = Depends(validate_admin),
@@ -30,9 +30,9 @@ async def add_instrument(
     db.add(instrument_create)
 
     await db.commit()
-    return StatusMessage()
+    return Ok()
 
-@router.delete("/instrument/{ticker}", response_model=StatusMessage)
+@router.delete("/instrument/{ticker}", response_model=Ok)
 async def delete_instrument(
     ticker: str,
     user: User_db = Depends(validate_admin),
@@ -51,4 +51,4 @@ async def delete_instrument(
     )
 
     await db.commit()
-    return StatusMessage()
+    return Ok()

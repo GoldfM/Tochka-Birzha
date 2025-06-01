@@ -13,11 +13,11 @@ class OrderState(str, Enum):
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
     CANCELED = "CANCELED"
 
-class TradeDirection(str, Enum):
+class Direction(str, Enum):
     BUY = "BUY"
     SELL = "SELL"
 
-class UserNameNew(BaseModel):
+class NewUser(BaseModel):
     name: str
 
 class User(BaseModel):
@@ -30,15 +30,15 @@ class Level(BaseModel):
     price: int
     qty: int
 
-class OrderBook(BaseModel):
-    buy_levels: List[Level]
-    sell_levels: List[Level]
+class L2OrderBook(BaseModel):
+    bid_levels: List[Level]
+    ask_levels: List[Level]
 class Instrument(BaseModel):
     name: str
     ticker: str
 
 
-class StatusMessage(BaseModel):
+class Ok(BaseModel):
     status: bool = True
 class Transaction(BaseModel):
     ticker: str
@@ -46,12 +46,12 @@ class Transaction(BaseModel):
     price: int
     timestamp: str
 
-class BalanceDown(BaseModel):
+class Body_withdraw_api_v1_admin_balance_withdraw_post(BaseModel):
     user_id: UUID
     ticker: str
     amount: int
 
-class BalanceUp(BaseModel):
+class Body_deposit_api_v1_admin_balance_deposit_post(BaseModel):
     user_id: UUID
     ticker: str
     amount: int
@@ -59,18 +59,18 @@ class BalanceUp(BaseModel):
 
 
 class LimitOrderRequest(BaseModel):
-    direction: TradeDirection
+    direction: Direction
     symbol: str
     quantity: int
     limit_price: int
 
 class MarketOrderRequest(BaseModel):
-    direction: TradeDirection
+    direction: Direction
     symbol: str
     quantity: int
 
 
-class CreateOrder(BaseModel):
+class CreateOrderResponse(BaseModel):
     success: bool = True
     order_id: UUID
 

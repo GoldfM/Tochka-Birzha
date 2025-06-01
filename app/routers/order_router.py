@@ -6,14 +6,14 @@ from sqlalchemy import select
 from app.models_DB.users import User_db
 from app.models_DB.limit_orders import LimitOrder_db
 from app.models_DB.market_orders import MarketOrder_db
-from app.models import LimitOrderRequest, LimitOrder, MarketOrder, MarketOrderRequest, CreateOrder, TradeDirection, OrderState, StatusMessage
+from app.models import LimitOrderRequest, LimitOrder, MarketOrder, MarketOrderRequest, CreateOrderResponse, Direction, OrderState, Ok
 from app.db_manager import get_db
 from uuid import uuid4, UUID
 from app.tools import verify_auth_token
 
 router = APIRouter(prefix="/order", tags=["order"])
 
-@router.post("/", response_model=CreateOrder)
+@router.post("/", response_model=CreateOrderResponse)
 async def create_order(
     order_body: LimitOrderRequest | MarketOrderRequest,
     api_key: str = Depends(verify_auth_token),
@@ -54,7 +54,7 @@ async def create_order(
     db.add(order)
     await db.commit()
 
-    return CreateOrder(success=True, order_id=order_id)
+    return CreateOrderResponse(success=True, order_id=order_id)
 
 @router.get("/", response_model=List[Union[LimitOrder, MarketOrder]])
 async def list_orders(
@@ -87,7 +87,7 @@ async def list_orders(
             user_id=order.user_id,
             timestamp=order.timestamp.isoformat() + "Z",
             body=LimitOrderRequest(
-                direction=TradeDirection(order.direction),
+                direction=Direction(order.direction),
                 ticker=order.ticker,
                 qty=order.qty,
                 price=order.price
@@ -102,7 +102,7 @@ async def list_orders(
             user_id=order.user_id,
             timestamp=order.timestamp.isoformat() + "Z",
             body=MarketOrderRequest(
-                direction=TradeDirection(order.direction),
+                direction=Direction(order.direction),
                 ticker=order.ticker,
                 qty=order.qty
             )
@@ -110,7 +110,7 @@ async def list_orders(
 
     return orders
 
-@router.delete("/{order_id}", response_model=StatusMessage)
+@router.delete("/{order_id}", response_model=Ok)
 async def cancel_order(
     order_id: UUID,
     api_key: str = Depends(verify_auth_token),
@@ -148,7 +148,7 @@ async def cancel_order(
 
     await db.commit()
 
-    return StatusMessage()
+    return Ok()
 
 
 @router.get("/{order_id}", response_model=Union[LimitOrder, MarketOrder])
@@ -185,7 +185,7 @@ async def get_order(
             user_id=limit_order.user_id,
             timestamp=limit_order.timestamp.isoformat() + "Z",
             body=LimitOrderRequest(
-                direction=TradeDirection(limit_order.direction),
+                direction=Direction(limit_order.direction),
                 ticker=limit_order.ticker,
                 qty=limit_order.qty,
                 price=limit_order.price
@@ -202,7 +202,7 @@ async def get_order(
             user_id=market_order.user_id,
             timestamp=market_order.timestamp.isoformat() + "Z",
             body=MarketOrderRequest(
-                direction=TradeDirection(market_order.direction),
+                direction=Direction(market_order.direction),
                 ticker=market_order.ticker,
                 qty=market_order.qty
             )

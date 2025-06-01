@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from app.models import BalanceUp, BalanceDown, StatusMessage
+from app.models import Body_deposit_api_v1_admin_balance_deposit_post, Body_withdraw_api_v1_admin_balance_withdraw_post, Ok
 from app.models_DB.balances import Balance_db
 from app.models_DB.users import User_db
 from typing import Dict
@@ -29,9 +29,9 @@ async def get_balances(api_key: str = Depends(verify_auth_token), db: AsyncSessi
     response = {balance.ticker: balance.amount for balance in balances}
     return response
 
-@admin_router.post("/deposit", response_model=StatusMessage)
+@admin_router.post("/deposit", response_model=Ok)
 async def deposit(
-    request: BalanceUp,
+    request: Body_deposit_api_v1_admin_balance_deposit_post,
     api_key: str = Depends(verify_auth_token),
     user: User_db = Depends(validate_admin),
     db: AsyncSession = Depends(get_db)
@@ -64,11 +64,11 @@ async def deposit(
 
     await db.commit()
 
-    return StatusMessage()
+    return Ok()
 
-@admin_router.post("/withdraw", response_model=StatusMessage)
+@admin_router.post("/withdraw", response_model=Ok)
 async def withdraw(
-    request: BalanceDown,
+    request: Body_withdraw_api_v1_admin_balance_withdraw_post,
     api_key: str = Depends(verify_auth_token),
     user: User_db = Depends(validate_admin),
     db: AsyncSession = Depends(get_db)
@@ -93,4 +93,4 @@ async def withdraw(
     balance.amount -= request.amount
     await db.commit()
 
-    return StatusMessage()
+    return Ok()

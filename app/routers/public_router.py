@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
-from app.models import UserNameNew, User, Instrument, OrderBook, Transaction, Level
+from app.models import NewUser, User, Instrument, L2OrderBook, Transaction, Level
 from app.models_DB.users import User_db
 from app.models_DB.instruments import Instrument_db
 from app.models_DB.transactions import Transaction_db
@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 router = APIRouter(prefix="/public", tags=["public"])
 
 @router.post("/register", response_model=User)
-async def register(new_user: UserNameNew, db: AsyncSession = Depends(get_db)):
+async def register(new_user: NewUser, db: AsyncSession = Depends(get_db)):
     existing_user = await db.execute(select(User_db).where(User_db.name == new_user.name))
     existing_user = existing_user.scalar_one_or_none()
 
@@ -37,7 +37,7 @@ async def list_instruments(db: AsyncSession = Depends(get_db)):
 
     return instruments
 
-@router.get("/orderbook/{ticker}", response_model=OrderBook)
+@router.get("/orderbook/{ticker}", response_model=L2OrderBook)
 async def get_orderbook(ticker: str, limit: int = 10, db: AsyncSession = Depends(get_db)):
     instrument_result = await db.execute(
         select(Instrument_db).where(Instrument_db.ticker == ticker)
@@ -55,9 +55,9 @@ async def get_orderbook(ticker: str, limit: int = 10, db: AsyncSession = Depends
     if not orderbook:
         raise HTTPException(status_code=404, detail="Orderbook not found")
 
-    return OrderBook(
-        buy_levels=[Level(**level) for level in orderbook.buy_levels][:limit],
-        sell_levels=[Level(**level) for level in orderbook.sell_levels][:limit],
+    return L2OrderBook(
+        bid_levels=[Level(**level) for level in orderbook.buy_levels][:limit],
+        ask_levels=[Level(**level) for level in orderbook.sell_levels][:limit],
     )
 
 @router.get("/transactions/{ticker}", response_model=List[Transaction])
