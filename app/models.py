@@ -75,17 +75,17 @@ class CreateOrderResponse(BaseModel):
     order_id: UUID
 
 class LimitOrder(BaseModel):
-    order_id: UUID
+    id: UUID
     status: OrderState
-    trader_id: UUID
-    created_at: str
-    details: LimitOrderRequest
-    executed_qty: int = 0
+    user_id: UUID
+    timestamp: str
+    body: LimitOrderRequest
+    filled: int = 0
 
 class MarketOrder(BaseModel):
-    order_id: UUID
+    id: UUID
     status: OrderState
-    trader_id: UUID
-    created_at: str
-    details: MarketOrderRequest
+    user_id: UUID
+    timestamp: str
+    body: MarketOrderRequest
 
