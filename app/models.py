@@ -4,8 +4,8 @@ from uuid import UUID
 from enum import Enum
 
 class Role(Enum):
-    USER = "user"
-    ADMIN = "admin"
+    USER = "USER"
+    ADMIN = "ADMIN"
 
 class OrderState(str, Enum):
     CREATED = "CREATED"
@@ -14,17 +14,17 @@ class OrderState(str, Enum):
     CANCELED = "CANCELED"
 
 class TradeDirection(str, Enum):
-    BUY = "buy"
-    SELL = "sell"
+    BUY = "BUY"
+    SELL = "SELL"
 
 class UserNameNew(BaseModel):
     name: str
 
 class User(BaseModel):
-    id: int
+    id: UUID
     name: str
     role: Role = Role.USER
-    api_key: UUID
+    api_key: str
 
 class Level(BaseModel):
     price: int
@@ -38,7 +38,8 @@ class Instrument(BaseModel):
     ticker: str
 
 
-
+class StatusMessage(BaseModel):
+    status: bool = True
 class Transaction(BaseModel):
     ticker: str
     amount: int
@@ -46,27 +47,32 @@ class Transaction(BaseModel):
     timestamp: str
 
 class BalanceDown(BaseModel):
-    id: UUID
+    user_id: UUID
     ticker: str
     amount: int
 
 class BalanceUp(BaseModel):
-    id: UUID
+    user_id: UUID
     ticker: str
     amount: int
 
 
 
 class LimitOrderRequest(BaseModel):
-    side: TradeDirection
+    direction: TradeDirection
     symbol: str
     quantity: int
     limit_price: int
 
 class MarketOrderRequest(BaseModel):
-    side: TradeDirection
+    direction: TradeDirection
     symbol: str
     quantity: int
+
+
+class CreateOrder(BaseModel):
+    success: bool = True
+    order_id: UUID
 
 class LimitOrder(BaseModel):
     order_id: UUID
@@ -83,6 +89,3 @@ class MarketOrder(BaseModel):
     created_at: str
     details: MarketOrderRequest
 
-class StatusMessage(BaseModel):
-    status: bool
-    
