@@ -14,6 +14,9 @@ async def verify_auth_token(token: str = Depends(auth_header)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication token is missing"
         )
+    if not token.startswith("TOKEN "):
+        raise HTTPException(status_code=401, detail="Api-key format is 'TOKEN <api_key>'")
+    token = token.replace("TOKEN ", "")
     return token.strip()
 
 

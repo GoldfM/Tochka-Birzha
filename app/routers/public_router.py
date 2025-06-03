@@ -31,7 +31,7 @@ async def user_registration(new_user_data: NewUser, db_session: AsyncSession = D
         id=uuid4(),
         name=new_user_data.name,
         role="USER",
-        api_key=f"{uuid4()}"
+        api_key='key-' + str(uuid4())
     )
 
     db_session.add(new_user)
