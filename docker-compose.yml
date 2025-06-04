@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:10-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 1234
+      POSTGRES_DB: Exchange
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d Exchange" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  exchange:
+    build: .
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://postgres:1234@postgres:5432/Exchange"
