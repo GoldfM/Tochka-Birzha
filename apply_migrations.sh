@@ -10,7 +10,7 @@ echo "PostgreSQL is ready - applying migrations..."
 
 # Применяем миграции
 export PGPASSWORD="1234"
-psql -h postgres -U postgres -d Exchange -f "/alembic/versions/init.sql"
+psql -h postgres -U postgres -d Exchange -f "/app/app/migrations/init.sql"
 
 # Запускаем приложение
 echo "Starting application..."
