@@ -13,6 +13,7 @@ from app.db_manager import get_db
 from app.tools import validate_admin, verify_auth_token
 
 admin_router = APIRouter(prefix="/admin", tags=["admin"])
+balance_router = APIRouter(prefix="/admin", tags=["balance","admin"])
 
 @admin_router.post("/instrument", responses={200: {"model": Ok}})
 async def add_instrument(
@@ -56,7 +57,7 @@ async def delete_instrument(
     return Ok()
 
 
-@admin_router.post("/balance/deposit", response_model=Ok)
+@balance_router.post("/balance/deposit", response_model=Ok)
 async def deposit(
         request: Body_deposit_api_v1_admin_balance_deposit_post,
         api_key: str = Depends(verify_auth_token),
@@ -90,7 +91,7 @@ async def deposit(
     return Ok()
 
 
-@admin_router.post("/balance/withdraw", response_model=Ok)
+@balance_router.post("/balance/withdraw", response_model=Ok)
 async def withdraw(
         request: Body_withdraw_api_v1_admin_balance_withdraw_post,
         api_key: str = Depends(verify_auth_token),

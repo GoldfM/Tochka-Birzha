@@ -10,7 +10,6 @@ from app.models_DB.balances import Balance_db
 
 # Так как в двух разделах появляется
 router = APIRouter(prefix="/balance", tags=["balance"])
-admin_router = APIRouter(prefix="/admin/balance", tags=["admin", "balance"])
 
 @router.get("/", response_model=Dict[str, float])
 async def get_balances(api_key: str = Depends(verify_auth_token), db: AsyncSession = Depends(get_db)):
