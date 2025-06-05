@@ -1,10 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select
-from sqlalchemy import text
-import asyncio
-DATABASE_URL = "postgresql+asyncpg://postgres:1234@postgres:5432/Exchange"
+DATABASE_URL = "postgresql+asyncpg://postgres:1234@postgres:5432/Tochka"
 
 Base = declarative_base()
 

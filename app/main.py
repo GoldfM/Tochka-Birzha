@@ -1,9 +1,4 @@
-from sys import prefix
-
 import uvicorn
-
-from sqlalchemy import inspect
-
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from app.routers.public_router import router as public_router
@@ -25,7 +20,7 @@ app.include_router(balance_router,prefix='/api/v1')
 app.include_router(admin_router,prefix='/api/v1')
 
 
-
+'''
 def get_model_schema(model):
     inspector = inspect(model)
     schema = {}
@@ -50,6 +45,6 @@ for model in all_models:
     db_schemas[model.__tablename__] = get_model_schema(model)
 
 for k,v in db_schemas.items():
-    print(k,v)
+    print(k,v)'''
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8080)
