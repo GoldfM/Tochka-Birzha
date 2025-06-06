@@ -11,4 +11,4 @@ RUN pip install -r requirements.txt
 COPY apply_migrations.sh /app/
 RUN chmod +x /app/apply_migrations.sh
 
-CMD ["/app/apply_migrations.sh"]
+CMD ["/bin/sh", "/app/apply_migrations.sh"]
