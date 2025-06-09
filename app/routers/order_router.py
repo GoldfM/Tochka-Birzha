@@ -20,7 +20,7 @@ from app.tools import verify_auth_token
 router = APIRouter(prefix="/order", tags=["order"])
 
 
-@router.post("/", responses={200: {"model": CreateOrderResponse}})
+@router.post("", responses={200: {"model": CreateOrderResponse}})
 async def create_order(
         order_body: LimitOrderRequest | MarketOrderRequest,
         api_key: str = Depends(verify_auth_token),
@@ -441,7 +441,7 @@ async def create_order(
                 raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@router.get("/", response_model=List[Union[LimitOrder, MarketOrder]])
+@router.get("", response_model=List[Union[LimitOrder, MarketOrder]])
 async def list_orders(
         api_key: str = Depends(verify_auth_token),
         db: AsyncSession = Depends(get_db)

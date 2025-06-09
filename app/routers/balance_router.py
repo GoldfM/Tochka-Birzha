@@ -11,7 +11,7 @@ from app.models_DB.balances import Balance_db
 # Так как в двух разделах появляется
 router = APIRouter(prefix="/balance", tags=["balance"])
 
-@router.get("/", response_model=Dict[str, float])
+@router.get("", response_model=Dict[str, float])
 async def get_balances(api_key: str = Depends(verify_auth_token), db: AsyncSession = Depends(get_db)):
     user = await db.scalar(
         select(User_db).where(User_db.api_key == api_key)
