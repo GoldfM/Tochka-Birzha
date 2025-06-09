@@ -57,16 +57,15 @@ async def fetch_orderbook_data(
         raise HTTPException(status_code=422, detail="Instrument not found")
 
     orderbook_query = select(OrderBook_db).where(OrderBook_db.ticker == ticker)
-    orderbook_data = (await db_connection.execute(orderbook_query)).first()
+    orderbook_data = (await db_connection.scalars(orderbook_query)).first()
 
-    if not orderbook_data:
+    if orderbook_data:
+        return L2OrderBook(
+            bid_levels=[Level(**l) for l in orderbook_data.bid_levels][:depth],
+            ask_levels=[Level(**l) for l in orderbook_data.ask_levels][:depth]
+        )
+    else:
         raise HTTPException(status_code=404, detail="Orderbook not found")
-
-    return L2OrderBook(
-        bid_levels=[Level(**l) for l in orderbook_data.buy_levels][:depth],
-        ask_levels=[Level(**l) for l in orderbook_data.sell_levels][:depth],
-    )
-
 
 @router.get("/transactions/{ticker}", response_model=List[Transaction])
 async def retrieve_transaction_history(

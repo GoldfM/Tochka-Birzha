@@ -88,20 +88,15 @@ CREATE TABLE if not exists orderbook (
 
 INSERT INTO users (id, name, role, api_key)
 VALUES (
-    '99999999-9999-9999-9999-999999999999',  -- Конкретный UUID
-    'admin'                                   -- Имя администратора
+    'af744719-4784-45b4-87dc-e4e9a2f0885c',  -- Конкретный UUID
+    'admin',                                   -- Имя администратора
     'ADMIN',                                  -- Роль
-    '11111111-1111-1111-1111-111111111111'    -- Конкретный API ключ
+    'key-2252d829-0f9a-4fd7-a445-42d092a5920e'    -- Конкретный API ключ
 );
+
 
 INSERT INTO instruments (name, ticker)
 VALUES (
-    'BYTCOIN',
-    'BTC'
-);
-
-INSERT INTO instruments (name, ticker)
-VALUES (
-    'ETHERIUM',
-    'ETH'
+    'rub',
+    'RUB'
 );
