@@ -50,7 +50,7 @@ async def fetch_all_instruments(database: AsyncSession = Depends(get_db)):
 @router.get("/orderbook/{ticker}", response_model=L2OrderBook)
 async def fetch_orderbook_data(
         ticker: str,
-        depth: Optional[int] = None,
+        limit: int = 10,
         db_connection: AsyncSession = Depends(get_db)
 ):
     if not await _check_instrument_exists(ticker, db_connection):
@@ -80,20 +80,15 @@ async def fetch_orderbook_data(
     # Сортируем bid по убыванию цены, ask по возрастанию
     bid_levels_sorted = sorted(bid_levels, key=lambda x: -x["price"])
     ask_levels_sorted = sorted(ask_levels, key=lambda x: x["price"])
-    if depth is not None:
-        return L2OrderBook(
-            bid_levels=[Level(**l) for l in bid_levels_sorted][:depth],
-            ask_levels=[Level(**l) for l in ask_levels_sorted][:depth]
-        )
-    else:
-        return L2OrderBook(
-            bid_levels=[Level(**l) for l in bid_levels_sorted],
-            ask_levels=[Level(**l) for l in ask_levels_sorted]
-        )
+
+    return L2OrderBook(
+        bid_levels=[Level(**l) for l in bid_levels_sorted][:limit],
+        ask_levels=[Level(**l) for l in ask_levels_sorted][:limit])
+
 @router.get("/transactions/{ticker}", response_model=List[Transaction])
 async def retrieve_transaction_history(
         ticker: str,
-        max_results: Optional[int] = None,
+        limit: int = 10,
         db: AsyncSession = Depends(get_db)
 ):
     if not await _check_instrument_exists(ticker, db):
@@ -102,13 +97,9 @@ async def retrieve_transaction_history(
     history_query = (
         select(Transaction_db)
         .where(Transaction_db.ticker == ticker)
-        .order_by(Transaction_db.timestamp.desc())
-    )
-
-    # Добавляем лимит только если max_results указан
-    if max_results is not None:
-        history_query = history_query.limit(max_results)
-
+        .order_by(Transaction_db.timestamp.desc()
+        )
+    ).limit(limit)
     transactions = (await db.execute(history_query)).scalars().all()
     return [
         Transaction(
