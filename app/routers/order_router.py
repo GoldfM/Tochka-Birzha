@@ -129,7 +129,6 @@ async def create_order(
                             timestamp=datetime.now(tzlocal())
                         )
                         db.add(transaction)
-                        await db.commit()
                         # Обновление балансов
                         total_cost = trade_qty * price
 
@@ -251,7 +250,6 @@ async def create_order(
                         timestamp=datetime.now(tzlocal())
                     )
                     db.add(transaction)
-                    await db.commit()
                     # Обновление балансов
                     total_cost = trade_qty * level_price
 
