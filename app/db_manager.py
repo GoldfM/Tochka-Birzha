@@ -7,7 +7,7 @@ Base = declarative_base()
 
 engine = create_async_engine(
     DATABASE_URL,
-    echo=True,
+    echo=False,
     pool_size=20,          # Максимальное число соединений
     max_overflow=10,       # Дополнительные соединения при нагрузке
     pool_timeout=30,       # Время ожидания соединения (сек)

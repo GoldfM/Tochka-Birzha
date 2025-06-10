@@ -14,11 +14,314 @@ from app.models_DB.market_orders import MarketOrder_db
 from app.models_DB.orderbook import OrderBook_db
 from app.models_DB.transactions import Transaction_db
 from app.models_DB.balances import Balance_db
-from app.models import LimitOrderRequest, LimitOrder, MarketOrder, MarketOrderRequest, CreateOrderResponse, Direction, OrderState, Ok
+from app.models import LimitOrderRequest, LimitOrder, MarketOrder, MarketOrderRequest, CreateOrderResponse, Direction, \
+    OrderState, Ok
 from app.db_manager import get_db
 from app.tools import verify_auth_token
 
 router = APIRouter(prefix="/order", tags=["order"])
+
+
+async def _check_user_balance(db: AsyncSession, user_id: UUID, ticker: str, required_amount: float):
+    balance = await db.scalar(
+        select(Balance_db).where(
+            Balance_db.user_id == user_id,
+            Balance_db.ticker == ticker
+        )
+    )
+    if balance is None or balance.amount < required_amount:
+        raise HTTPException(status_code=400, detail=f"Insufficient {ticker} balance")
+
+
+async def _update_balances(db: AsyncSession, buyer_id: UUID, seller_id: UUID, ticker: str, qty: float, price: float):
+    # Calculate total cost
+    total_cost = qty * price
+
+    # Update buyer's RUB balance
+    buyer_rub = await db.scalar(
+        select(Balance_db).where(
+            Balance_db.user_id == buyer_id,
+            Balance_db.ticker == "RUB"
+        )
+    )
+    if buyer_rub is None:
+        buyer_rub = Balance_db(user_id=buyer_id, ticker="RUB", amount=-total_cost)
+    else:
+        buyer_rub.amount -= total_cost
+    db.add(buyer_rub)
+
+    # Update buyer's asset balance
+    buyer_asset = await db.scalar(
+        select(Balance_db).where(
+            Balance_db.user_id == buyer_id,
+            Balance_db.ticker == ticker
+        )
+    )
+    if buyer_asset is None:
+        buyer_asset = Balance_db(user_id=buyer_id, ticker=ticker, amount=qty)
+    else:
+        buyer_asset.amount += qty
+    db.add(buyer_asset)
+
+    # Update seller's asset balance
+    seller_asset = await db.scalar(
+        select(Balance_db).where(
+            Balance_db.user_id == seller_id,
+            Balance_db.ticker == ticker
+        )
+    )
+    if seller_asset is None:
+        seller_asset = Balance_db(user_id=seller_id, ticker=ticker, amount=-qty)
+    else:
+        seller_asset.amount -= qty
+    db.add(seller_asset)
+
+    # Update seller's RUB balance
+    seller_rub = await db.scalar(
+        select(Balance_db).where(
+            Balance_db.user_id == seller_id,
+            Balance_db.ticker == "RUB"
+        )
+    )
+    if seller_rub is None:
+        seller_rub = Balance_db(user_id=seller_id, ticker="RUB", amount=total_cost)
+    else:
+        seller_rub.amount += total_cost
+    db.add(seller_rub)
+
+
+async def _execute_market_order(db: AsyncSession, order: MarketOrder_db, orderbook: OrderBook_db):
+    is_buy = order.direction == "BUY"
+    levels = orderbook.ask_levels if is_buy else orderbook.bid_levels
+
+    total_available_qty = sum(level["qty"] for level in levels)
+    if total_available_qty < order.qty:
+        order.filled = 0
+        order.status = OrderState.NEW
+        return False
+
+    remaining_qty = order.qty
+    executed_qty = 0
+    executed_levels = []
+
+    for level in levels:
+        if remaining_qty <= 0:
+            break
+
+        price = level["price"]
+        trade_qty = min(level["qty"], remaining_qty)
+        remaining_qty -= trade_qty
+        executed_qty += trade_qty
+
+        buyer_id = order.user_id if is_buy else UUID(level["user_id"])
+        seller_id = UUID(level["user_id"]) if is_buy else order.user_id
+
+        # Create transaction
+        transaction = Transaction_db(
+            ticker=order.ticker,
+            amount=trade_qty,
+            price=price,
+            timestamp=datetime.now(tzlocal())
+        )
+        db.add(transaction)
+
+        # Update balances
+        await _update_balances(db, buyer_id, seller_id, order.ticker, trade_qty, price)
+
+        if is_buy:
+            level["reserved_funds"] -= trade_qty * price
+        else:
+            level["reserved_funds"] -= trade_qty
+        level["reserved_funds"] = max(level["reserved_funds"], 0)
+
+        level["qty"] -= trade_qty
+
+        if "order_id" in level:
+            matched_order_id = UUID(level["order_id"])
+            matched_order = await db.get(LimitOrder_db, matched_order_id)
+            if matched_order:
+                matched_order.filled += trade_qty
+                if matched_order.filled >= matched_order.qty:
+                    matched_order.status = OrderState.EXECUTED
+                else:
+                    matched_order.status = OrderState.PARTIALLY_EXECUTED
+                db.add(matched_order)
+
+        if level["qty"] <= 0:
+            executed_levels.append(level)
+
+    for level in executed_levels:
+        levels.remove(level)
+
+    if is_buy:
+        orderbook.ask_levels = levels
+        flag_modified(orderbook, "ask_levels")
+    else:
+        orderbook.bid_levels = levels
+        flag_modified(orderbook, "bid_levels")
+
+    order.filled = executed_qty
+    order.status = OrderState.EXECUTED
+    return True
+
+
+async def _execute_limit_order(db: AsyncSession, order: LimitOrder_db, orderbook: OrderBook_db):
+    levels = orderbook.ask_levels if order.direction == "BUY" else orderbook.bid_levels
+    is_buy = order.direction == "BUY"
+
+    matched_qty = 0
+    remaining_qty = order.qty
+    executed_levels = []
+
+    for level in levels:
+        if remaining_qty <= 0:
+            break
+
+        level_price = level["price"]
+        if (is_buy and level_price > order.price) or (not is_buy and level_price < order.price):
+            break
+
+        trade_qty = min(remaining_qty, level["qty"])
+        remaining_qty -= trade_qty
+        matched_qty += trade_qty
+
+        buyer_id = order.user_id if is_buy else UUID(level["user_id"])
+        seller_id = UUID(level["user_id"]) if is_buy else order.user_id
+
+        # Create transaction
+        transaction = Transaction_db(
+            ticker=order.ticker,
+            amount=trade_qty,
+            price=level_price,
+            timestamp=datetime.now(tzlocal())
+        )
+        db.add(transaction)
+
+        # Update balances
+        await _update_balances(db, buyer_id, seller_id, order.ticker, trade_qty, level_price)
+
+        if is_buy:
+            level["reserved_funds"] -= trade_qty
+        else:
+            level["reserved_funds"] -= trade_qty * level_price
+        level["reserved_funds"] = max(level["reserved_funds"], 0)
+
+        level["qty"] -= trade_qty
+        if level["qty"] <= 0:
+            executed_levels.append(level)
+
+            if "order_id" in level:
+                matched_order_id = UUID(level["order_id"])
+                matched_order = await db.get(LimitOrder_db, matched_order_id)
+                if matched_order:
+                    matched_order.filled = matched_order.qty
+                    matched_order.status = OrderState.EXECUTED
+                    db.add(matched_order)
+        else:
+            if "order_id" in level:
+                matched_order_id = UUID(level["order_id"])
+                matched_order = await db.get(LimitOrder_db, matched_order_id)
+                if matched_order:
+                    matched_order.filled += trade_qty
+                    matched_order.status = OrderState.PARTIALLY_EXECUTED
+                    db.add(matched_order)
+
+    for lvl in executed_levels:
+        levels.remove(lvl)
+
+    if is_buy:
+        orderbook.ask_levels = levels
+        flag_modified(orderbook, "ask_levels")
+    else:
+        orderbook.bid_levels = levels
+        flag_modified(orderbook, "bid_levels")
+
+    order.filled = matched_qty
+
+    if matched_qty == 0:
+        order.status = OrderState.NEW
+        # Add to order book
+        qty_left = order.qty
+        reserved_funds = qty_left * order.price if order.direction == "BUY" else qty_left
+
+        new_level = {
+            "price": order.price,
+            "qty": qty_left,
+            "user_id": str(order.user_id),
+            "order_id": str(order.id),
+            "reserved_funds": reserved_funds
+        }
+
+        levels = orderbook.bid_levels if order.direction == "BUY" else orderbook.ask_levels
+
+        # Merge levels
+        merged = False
+        for level in levels:
+            if (
+                    level["price"] == new_level["price"] and
+                    level.get("user_id") == new_level.get("user_id") and
+                    level.get("order_id") == new_level.get("order_id")
+            ):
+                level["qty"] += new_level["qty"]
+                for key in ["reserved_rub", "reserved_funds"]:
+                    if key in new_level:
+                        level[key] = level.get(key, 0) + new_level.get(key, 0)
+                merged = True
+                break
+
+        if not merged:
+            levels.append(new_level)
+
+        if order.direction == "BUY":
+            orderbook.bid_levels = sorted(levels, key=lambda x: -x["price"])
+            flag_modified(orderbook, "bid_levels")
+        else:
+            orderbook.ask_levels = sorted(levels, key=lambda x: x["price"])
+            flag_modified(orderbook, "ask_levels")
+    elif remaining_qty == 0:
+        order.status = OrderState.EXECUTED
+    else:
+        order.status = OrderState.PARTIALLY_EXECUTED
+        # Add remaining to order book
+        qty_left = remaining_qty
+        reserved_funds = qty_left * order.price if order.direction == "BUY" else qty_left
+
+        new_level = {
+            "price": order.price,
+            "qty": qty_left,
+            "user_id": str(order.user_id),
+            "order_id": str(order.id),
+            "reserved_funds": reserved_funds
+        }
+
+        levels = orderbook.bid_levels if order.direction == "BUY" else orderbook.ask_levels
+
+        # Merge levels
+        merged = False
+        for level in levels:
+            if (
+                    level["price"] == new_level["price"] and
+                    level.get("user_id") == new_level.get("user_id") and
+                    level.get("order_id") == new_level.get("order_id")
+            ):
+                level["qty"] += new_level["qty"]
+                for key in ["reserved_rub", "reserved_funds"]:
+                    if key in new_level:
+                        level[key] = level.get(key, 0) + new_level.get(key, 0)
+                merged = True
+                break
+
+        if not merged:
+            levels.append(new_level)
+
+        if order.direction == "BUY":
+            orderbook.bid_levels = sorted(levels, key=lambda x: -x["price"])
+            flag_modified(orderbook, "bid_levels")
+        else:
+            orderbook.ask_levels = sorted(levels, key=lambda x: x["price"])
+            flag_modified(orderbook, "ask_levels")
+
+    return True
 
 
 @router.post("", responses={200: {"model": CreateOrderResponse}})
@@ -27,417 +330,93 @@ async def create_order(
         api_key: str = Depends(verify_auth_token),
         db: AsyncSession = Depends(get_db)
 ):
-    async with db.begin():
-        try:
-            user = await db.scalar(select(User_db).where(User_db.api_key == api_key))
-            if not user:
-                raise HTTPException(status_code=404, detail="User account not found")
 
-            # Проверка и резервирование средств
-            if order_body.direction == "SELL":
-                balance = await db.scalar(
-                    select(Balance_db).where(
-                        Balance_db.user_id == user.id,
-                        Balance_db.ticker == order_body.ticker
-                    )
-                )
-                if balance is None or balance.amount < order_body.qty:
-                    raise HTTPException(status_code=400, detail="Insufficient balance for SELL order")
-            elif order_body.direction == "BUY" and isinstance(order_body, LimitOrderRequest):
-                rub_balance = await db.scalar(
-                    select(Balance_db).where(
-                        Balance_db.user_id == user.id,
-                        Balance_db.ticker == "RUB"
-                    )
-                )
-                total_cost = order_body.qty * order_body.price
-                if rub_balance is None or rub_balance.amount < total_cost:
-                    raise HTTPException(status_code=400, detail="Insufficient RUB balance for BUY order")
+    # First check user without transaction
+    user = await db.scalar(select(User_db).where(User_db.api_key == api_key))
+    if not user:
+        raise HTTPException(status_code=404, detail="User account not found")
 
-            # Создание записи ордера
-            order_id = uuid4()
-            if isinstance(order_body, LimitOrderRequest):
-                order = LimitOrder_db(
-                    id=order_id,
-                    status=OrderState.NEW,
-                    user_id=user.id,
-                    timestamp=datetime.now(),
-                    direction=order_body.direction,
-                    ticker=order_body.ticker,
-                    qty=order_body.qty,
-                    price=order_body.price,
-                    filled=0
-                )
-            else:
-                order = MarketOrder_db(
-                    id=order_id,
-                    status=OrderState.NEW,
-                    user_id=user.id,
-                    timestamp=datetime.now(),
-                    direction=order_body.direction,
-                    ticker=order_body.ticker,
-                    qty=order_body.qty
-                )
-            db.add(order)
+    # Check balance without transaction
+    if order_body.direction == "SELL":
+        balance = await db.scalar(
+            select(Balance_db).where(
+                Balance_db.user_id == user.id,
+                Balance_db.ticker == order_body.ticker
+            )
+        )
+        if balance is None or balance.amount < order_body.qty:
+            raise HTTPException(status_code=400, detail="Insufficient balance for SELL order")
+    elif order_body.direction == "BUY" and isinstance(order_body, LimitOrderRequest):
+        rub_balance = await db.scalar(
+            select(Balance_db).where(
+                Balance_db.user_id == user.id,
+                Balance_db.ticker == "RUB"
+            )
+        )
+        total_cost = order_body.qty * order_body.price
+        if rub_balance is None or rub_balance.amount < total_cost:
+            raise HTTPException(status_code=400, detail="Insufficient RUB balance for BUY order")
+
+
+    try:
+        # Create order record
+        order_id = uuid4()
+        if isinstance(order_body, LimitOrderRequest):
+            order = LimitOrder_db(
+                id=order_id,
+                status=OrderState.NEW,
+                user_id=user.id,
+                timestamp=datetime.now(),
+                direction=order_body.direction,
+                ticker=order_body.ticker,
+                qty=order_body.qty,
+                price=order_body.price,
+                filled=0
+            )
+        else:
+            order = MarketOrder_db(
+                id=order_id,
+                status=OrderState.NEW,
+                user_id=user.id,
+                timestamp=datetime.now(),
+                direction=order_body.direction,
+                ticker=order_body.ticker,
+                qty=order_body.qty
+            )
+        db.add(order)
+        await db.flush()
+
+        # Get or create orderbook
+        orderbook = await db.scalar(
+            select(OrderBook_db).where(OrderBook_db.ticker == order_body.ticker)
+        )
+        if not orderbook:
+            orderbook = OrderBook_db(
+                ticker=order_body.ticker,
+                bid_levels=[],
+                ask_levels=[]
+            )
+            db.add(orderbook)
             await db.flush()
 
-            # Получение или создание стакана
-            orderbook = await db.scalar(
-                select(OrderBook_db).where(OrderBook_db.ticker == order_body.ticker)
-            )
-            if not orderbook:
-                orderbook = OrderBook_db(
-                    ticker=order_body.ticker,
-                    bid_levels=[],
-                    ask_levels=[]
-                )
-                db.add(orderbook)
-                await db.flush()
+        # Execute order
+        if isinstance(order_body, MarketOrderRequest):
+            await _execute_market_order(db, order, orderbook)
+        else:
+            await _execute_limit_order(db, order, orderbook)
 
-            # Исполнение ордера
-            if isinstance(order_body, MarketOrderRequest):
-                # Код исполнения рыночного ордера
-                is_buy = order.direction == "BUY"
-                levels = orderbook.ask_levels if is_buy else orderbook.bid_levels
+        return CreateOrderResponse(success=True, order_id=order.id)
 
-                total_available_qty = sum(level["qty"] for level in levels)
-                if total_available_qty < order.qty:
-                    order.filled = 0
-                    order.status = OrderState.NEW
-                else:
-                    remaining_qty = order.qty
-                    executed_qty = 0
-                    executed_levels = []
-
-                    for level in levels:
-                        if remaining_qty <= 0:
-                            break
-
-                        price = level["price"]
-                        trade_qty = min(level["qty"], remaining_qty)
-                        remaining_qty -= trade_qty
-                        executed_qty += trade_qty
-
-                        buyer_id = order.user_id if is_buy else UUID(level["user_id"])
-                        seller_id = UUID(level["user_id"]) if is_buy else order.user_id
-
-                        # Создание транзакции
-                        transaction = Transaction_db(
-                            ticker=order.ticker,
-                            amount=trade_qty,
-                            price=price,
-                            timestamp=datetime.now(tzlocal())
-                        )
-                        db.add(transaction)
-                        # Обновление балансов
-                        total_cost = trade_qty * price
-
-                        # Баланс RUB покупателя
-                        buyer_rub_balance = await db.scalar(
-                            select(Balance_db).where(
-                                Balance_db.user_id == buyer_id,
-                                Balance_db.ticker == "RUB"
-                            )
-                        )
-                        if buyer_rub_balance is None:
-                            buyer_rub_balance = Balance_db(user_id=buyer_id, ticker="RUB", amount=-total_cost)
-                        else:
-                            buyer_rub_balance.amount -= total_cost
-                        db.add(buyer_rub_balance)
-
-                        # Баланс актива покупателя
-                        buyer_asset_balance = await db.scalar(
-                            select(Balance_db).where(
-                                Balance_db.user_id == buyer_id,
-                                Balance_db.ticker == order.ticker
-                            )
-                        )
-                        if buyer_asset_balance is None:
-                            buyer_asset_balance = Balance_db(user_id=buyer_id, ticker=order.ticker, amount=trade_qty)
-                        else:
-                            buyer_asset_balance.amount += trade_qty
-                        db.add(buyer_asset_balance)
-
-                        # Баланс актива продавца
-                        seller_asset_balance = await db.scalar(
-                            select(Balance_db).where(
-                                Balance_db.user_id == seller_id,
-                                Balance_db.ticker == order.ticker
-                            )
-                        )
-                        if seller_asset_balance is None:
-                            seller_asset_balance = Balance_db(user_id=seller_id, ticker=order.ticker, amount=-trade_qty)
-                        else:
-                            seller_asset_balance.amount -= trade_qty
-                        db.add(seller_asset_balance)
-
-                        # Баланс RUB продавца
-                        seller_rub_balance = await db.scalar(
-                            select(Balance_db).where(
-                                Balance_db.user_id == seller_id,
-                                Balance_db.ticker == "RUB"
-                            )
-                        )
-                        if seller_rub_balance is None:
-                            seller_rub_balance = Balance_db(user_id=seller_id, ticker="RUB", amount=total_cost)
-                        else:
-                            seller_rub_balance.amount += total_cost
-                        db.add(seller_rub_balance)
-
-                        if is_buy:
-                            level["reserved_funds"] -= trade_qty * price
-                        else:
-                            level["reserved_funds"] -= trade_qty
-                        level["reserved_funds"] = max(level["reserved_funds"], 0)
-
-                        level["qty"] -= trade_qty
-
-                        if "order_id" in level:
-                            matched_order_id = UUID(level["order_id"])
-                            matched_order = await db.get(LimitOrder_db, matched_order_id)
-                            if matched_order:
-                                matched_order.filled += trade_qty
-                                if matched_order.filled >= matched_order.qty:
-                                    matched_order.status = OrderState.EXECUTED
-                                else:
-                                    matched_order.status = OrderState.PARTIALLY_EXECUTED
-                                db.add(matched_order)
-
-                        if level["qty"] <= 0:
-                            executed_levels.append(level)
-
-                    for level in executed_levels:
-                        levels.remove(level)
-
-                    if is_buy:
-                        orderbook.ask_levels = levels
-                        flag_modified(orderbook, "ask_levels")
-                    else:
-                        orderbook.bid_levels = levels
-                        flag_modified(orderbook, "bid_levels")
-
-                    order.filled = executed_qty
-                    order.status = OrderState.EXECUTED
-            else:
-                # Код исполнения лимитного ордера
-                levels = orderbook.ask_levels if order.direction == "BUY" else orderbook.bid_levels
-                is_buy = order.direction == "BUY"
-
-                matched_qty = 0
-                remaining_qty = order.qty
-                executed_levels = []
-
-                for level in levels:
-                    if remaining_qty <= 0:
-                        break
-
-                    level_price = level["price"]
-                    if (is_buy and level_price > order.price) or (not is_buy and level_price < order.price):
-                        break
-
-                    trade_qty = min(remaining_qty, level["qty"])
-                    remaining_qty -= trade_qty
-                    matched_qty += trade_qty
-
-                    buyer_id = order.user_id if is_buy else UUID(level["user_id"])
-                    seller_id = UUID(level["user_id"]) if is_buy else order.user_id
-
-                    # Создание транзакции
-                    transaction = Transaction_db(
-                        ticker=order.ticker,
-                        amount=trade_qty,
-                        price=level_price,
-                        timestamp=datetime.now(tzlocal())
-                    )
-                    db.add(transaction)
-                    # Обновление балансов
-                    total_cost = trade_qty * level_price
-
-                    # Баланс RUB покупателя
-                    buyer_rub_balance = await db.scalar(
-                        select(Balance_db).where(
-                            Balance_db.user_id == buyer_id,
-                            Balance_db.ticker == "RUB"
-                        )
-                    )
-                    if buyer_rub_balance is None:
-                        buyer_rub_balance = Balance_db(user_id=buyer_id, ticker="RUB", amount=-total_cost)
-                    else:
-                        buyer_rub_balance.amount -= total_cost
-                    db.add(buyer_rub_balance)
-
-                    # Баланс актива покупателя
-                    buyer_asset_balance = await db.scalar(
-                        select(Balance_db).where(
-                            Balance_db.user_id == buyer_id,
-                            Balance_db.ticker == order.ticker
-                        )
-                    )
-                    if buyer_asset_balance is None:
-                        buyer_asset_balance = Balance_db(user_id=buyer_id, ticker=order.ticker, amount=trade_qty)
-                    else:
-                        buyer_asset_balance.amount += trade_qty
-                    db.add(buyer_asset_balance)
-
-                    # Баланс актива продавца
-                    seller_asset_balance = await db.scalar(
-                        select(Balance_db).where(
-                            Balance_db.user_id == seller_id,
-                            Balance_db.ticker == order.ticker
-                        )
-                    )
-                    if seller_asset_balance is None:
-                        seller_asset_balance = Balance_db(user_id=seller_id, ticker=order.ticker, amount=-trade_qty)
-                    else:
-                        seller_asset_balance.amount -= trade_qty
-                    db.add(seller_asset_balance)
-
-                    # Баланс RUB продавца
-                    seller_rub_balance = await db.scalar(
-                        select(Balance_db).where(
-                            Balance_db.user_id == seller_id,
-                            Balance_db.ticker == "RUB"
-                        )
-                    )
-                    if seller_rub_balance is None:
-                        seller_rub_balance = Balance_db(user_id=seller_id, ticker="RUB", amount=total_cost)
-                    else:
-                        seller_rub_balance.amount += total_cost
-                    db.add(seller_rub_balance)
-
-                    if is_buy:
-                        level["reserved_funds"] -= trade_qty
-                    else:
-                        level["reserved_funds"] -= trade_qty * level_price
-                    level["reserved_funds"] = max(level["reserved_funds"], 0)
-
-                    level["qty"] -= trade_qty
-                    if level["qty"] <= 0:
-                        executed_levels.append(level)
-
-                        if "order_id" in level:
-                            matched_order_id = UUID(level["order_id"])
-                            matched_order = await db.get(LimitOrder_db, matched_order_id)
-                            if matched_order:
-                                matched_order.filled = matched_order.qty
-                                matched_order.status = OrderState.EXECUTED
-                                db.add(matched_order)
-                    else:
-                        if "order_id" in level:
-                            matched_order_id = UUID(level["order_id"])
-                            matched_order = await db.get(LimitOrder_db, matched_order_id)
-                            if matched_order:
-                                matched_order.filled += trade_qty
-                                matched_order.status = OrderState.PARTIALLY_EXECUTED
-                                db.add(matched_order)
-
-                for lvl in executed_levels:
-                    levels.remove(lvl)
-
-                if is_buy:
-                    orderbook.ask_levels = levels
-                    flag_modified(orderbook, "ask_levels")
-                else:
-                    orderbook.bid_levels = levels
-                    flag_modified(orderbook, "bid_levels")
-
-                order.filled = matched_qty
-
-                if matched_qty == 0:
-                    order.status = OrderState.NEW
-                    # Добавление в стакан
-                    qty_left = order.qty
-                    reserved_funds = qty_left * order.price if order.direction == "BUY" else qty_left
-
-                    new_level = {
-                        "price": order.price,
-                        "qty": qty_left,
-                        "user_id": str(order.user_id),
-                        "order_id": str(order.id),
-                        "reserved_funds": reserved_funds
-                    }
-
-                    levels = orderbook.bid_levels if order.direction == "BUY" else orderbook.ask_levels
-
-                    # Объединение уровней
-                    merged = False
-                    for level in levels:
-                        if (
-                                level["price"] == new_level["price"] and
-                                level.get("user_id") == new_level.get("user_id") and
-                                level.get("order_id") == new_level.get("order_id")
-                        ):
-                            level["qty"] += new_level["qty"]
-                            for key in ["reserved_rub", "reserved_funds"]:
-                                if key in new_level:
-                                    level[key] = level.get(key, 0) + new_level.get(key, 0)
-                            merged = True
-                            break
-
-                    if not merged:
-                        levels.append(new_level)
-
-                    if order.direction == "BUY":
-                        orderbook.bid_levels = sorted(levels, key=lambda x: -x["price"])
-                        flag_modified(orderbook, "bid_levels")
-                    else:
-                        orderbook.ask_levels = sorted(levels, key=lambda x: x["price"])
-                        flag_modified(orderbook, "ask_levels")
-                elif remaining_qty == 0:
-                    order.status = OrderState.EXECUTED
-                else:
-                    order.status = OrderState.PARTIALLY_EXECUTED
-                    # Добавление в стакан оставшегося количества
-                    qty_left = remaining_qty
-                    reserved_funds = qty_left * order.price if order.direction == "BUY" else qty_left
-
-                    new_level = {
-                        "price": order.price,
-                        "qty": qty_left,
-                        "user_id": str(order.user_id),
-                        "order_id": str(order.id),
-                        "reserved_funds": reserved_funds
-                    }
-
-                    levels = orderbook.bid_levels if order.direction == "BUY" else orderbook.ask_levels
-
-                    # Объединение уровней
-                    merged = False
-                    for level in levels:
-                        if (
-                                level["price"] == new_level["price"] and
-                                level.get("user_id") == new_level.get("user_id") and
-                                level.get("order_id") == new_level.get("order_id")
-                        ):
-                            level["qty"] += new_level["qty"]
-                            for key in ["reserved_rub", "reserved_funds"]:
-                                if key in new_level:
-                                    level[key] = level.get(key, 0) + new_level.get(key, 0)
-                            merged = True
-                            break
-
-                    if not merged:
-                        levels.append(new_level)
-
-                    if order.direction == "BUY":
-                        orderbook.bid_levels = sorted(levels, key=lambda x: -x["price"])
-                        flag_modified(orderbook, "bid_levels")
-                    else:
-                        orderbook.ask_levels = sorted(levels, key=lambda x: x["price"])
-                        flag_modified(orderbook, "ask_levels")
-
-            return CreateOrderResponse(success=True, order_id=order.id)
-
-        except Exception as e:
-            await db.rollback()
-            if isinstance(e, IntegrityError):
-                raise HTTPException(status_code=400, detail=f"Database integrity error: {str(e)}")
-            elif isinstance(e, HTTPException):
-                raise e
-            elif isinstance(e, DBAPIError):
-                raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-            else:
-                raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    except Exception as e:
+        await db.rollback()
+        if isinstance(e, IntegrityError):
+            raise HTTPException(status_code=400, detail=f"Database integrity error: {str(e)}")
+        elif isinstance(e, HTTPException):
+            raise e
+        elif isinstance(e, DBAPIError):
+            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        else:
+            raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @router.get("", response_model=List[Union[LimitOrder, MarketOrder]])
@@ -445,6 +424,7 @@ async def list_orders(
         api_key: str = Depends(verify_auth_token),
         db: AsyncSession = Depends(get_db)
 ):
+    # Read-only operation - no transaction needed
     user = await db.scalar(
         select(User_db).where(User_db.api_key == api_key)
     )
@@ -505,6 +485,7 @@ async def get_order(
         api_key: str = Depends(verify_auth_token),
         db: AsyncSession = Depends(get_db)
 ):
+    # Read-only operation - no transaction needed
     user = await db.scalar(
         select(User_db).where(User_db.api_key == api_key)
     )
@@ -561,78 +542,82 @@ async def cancel_order(
         api_key: str = Depends(verify_auth_token),
         db: AsyncSession = Depends(get_db)
 ):
+    # First check user without transaction
     user = await db.scalar(
         select(User_db).where(User_db.api_key == api_key)
     )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    limit_order = await db.scalar(
-        select(LimitOrder_db).where(LimitOrder_db.id == order_id)
-    )
-
-    if not limit_order:
-        raise HTTPException(status_code=404, detail="Limit order not found (cannot cancel market orders)")
-
-    if limit_order.user_id != user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    if limit_order.status not in [OrderState.NEW, OrderState.PARTIALLY_EXECUTED]:
-        raise HTTPException(status_code=400, detail="Order cannot be cancelled")
-
-    unfilled_qty = limit_order.qty - limit_order.filled
-    if unfilled_qty <= 0:
-        raise HTTPException(status_code=400, detail="Order already fully executed")
-
-    if limit_order.direction == "BUY":
-        refund_amount = unfilled_qty * limit_order.price
-        rub_balance = await db.scalar(
-            select(Balance_db).where(
-                Balance_db.user_id == user.id,
-                Balance_db.ticker == "RUB"
-            )
+    # Now start transaction for cancellation
+    try:
+        limit_order = await db.scalar(
+            select(LimitOrder_db).where(LimitOrder_db.id == order_id)
         )
-        if rub_balance is None:
-            rub_balance = Balance_db(user_id=user.id, ticker="RUB", amount=refund_amount)
-        else:
-            rub_balance.amount += refund_amount
-    else:
-        asset_balance = await db.scalar(
-            select(Balance_db).where(
-                Balance_db.user_id == user.id,
-                Balance_db.ticker == limit_order.ticker
-            )
-        )
-        if asset_balance is None:
-            asset_balance = Balance_db(user_id=user.id, ticker=limit_order.ticker, amount=unfilled_qty)
-        else:
-            asset_balance.amount += unfilled_qty
 
-    db.add(rub_balance if limit_order.direction == "BUY" else asset_balance)
+        if not limit_order:
+            raise HTTPException(status_code=404, detail="Limit order not found (cannot cancel market orders)")
 
-    orderbook = await db.scalar(
-        select(OrderBook_db).where(OrderBook_db.ticker == limit_order.ticker)
-    )
+        if limit_order.user_id != user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
 
-    if orderbook:
-        levels = orderbook.bid_levels if limit_order.direction == "BUY" else orderbook.ask_levels
-        for level in levels:
-            if level["price"] == limit_order.price:
-                level["qty"] -= unfilled_qty
-                break
+        if limit_order.status not in [OrderState.NEW, OrderState.PARTIALLY_EXECUTED]:
+            raise HTTPException(status_code=400, detail="Order cannot be cancelled")
 
-        levels[:] = [lvl for lvl in levels if lvl["qty"] > 0]
+        unfilled_qty = limit_order.qty - limit_order.filled
+        if unfilled_qty <= 0:
+            raise HTTPException(status_code=400, detail="Order already fully executed")
 
         if limit_order.direction == "BUY":
-            orderbook.bid_levels = sorted(levels, key=lambda x: -x["price"])
-            flag_modified(orderbook, "bid_levels")
+            refund_amount = unfilled_qty * limit_order.price
+            rub_balance = await db.scalar(
+                select(Balance_db).where(
+                    Balance_db.user_id == user.id,
+                    Balance_db.ticker == "RUB"
+                )
+            )
+            if rub_balance is None:
+                rub_balance = Balance_db(user_id=user.id, ticker="RUB", amount=refund_amount)
+            else:
+                rub_balance.amount += refund_amount
+            db.add(rub_balance)
         else:
-            orderbook.ask_levels = sorted(levels, key=lambda x: x["price"])
-            flag_modified(orderbook, "ask_levels")
+            asset_balance = await db.scalar(
+                select(Balance_db).where(
+                    Balance_db.user_id == user.id,
+                    Balance_db.ticker == limit_order.ticker
+                )
+            )
+            if asset_balance is None:
+                asset_balance = Balance_db(user_id=user.id, ticker=limit_order.ticker, amount=unfilled_qty)
+            else:
+                asset_balance.amount += unfilled_qty
+            db.add(asset_balance)
 
-    limit_order.status = OrderState.CANCELLED
-    db.add(limit_order)
+        orderbook = await db.scalar(
+            select(OrderBook_db).where(OrderBook_db.ticker == limit_order.ticker)
+        )
 
-    await db.commit()
+        if orderbook:
+            levels = orderbook.bid_levels if limit_order.direction == "BUY" else orderbook.ask_levels
+            for level in levels:
+                if level["price"] == limit_order.price:
+                    level["qty"] -= unfilled_qty
+                    break
 
-    return Ok()
+            levels[:] = [lvl for lvl in levels if lvl["qty"] > 0]
+
+            if limit_order.direction == "BUY":
+                orderbook.bid_levels = sorted(levels, key=lambda x: -x["price"])
+                flag_modified(orderbook, "bid_levels")
+            else:
+                orderbook.ask_levels = sorted(levels, key=lambda x: x["price"])
+                flag_modified(orderbook, "ask_levels")
+
+        limit_order.status = OrderState.CANCELLED
+        db.add(limit_order)
+
+        return Ok()
+    except Exception as e:
+        await db.rollback()
+        raise
