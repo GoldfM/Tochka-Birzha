@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import List, Union, Optional
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from dateutil.tz import tzlocal
 from uuid import uuid4, UUID
 from sqlalchemy import select, cast, String
 from sqlalchemy.orm.attributes import flag_modified
@@ -125,7 +126,7 @@ async def create_order(
                             ticker=order.ticker,
                             amount=trade_qty,
                             price=price,
-                            timestamp=datetime.now()
+                            timestamp=datetime.now(tzlocal())
                         )
                         db.add(transaction)
 
@@ -247,7 +248,7 @@ async def create_order(
                         ticker=order.ticker,
                         amount=trade_qty,
                         price=level_price,
-                        timestamp=datetime.now()
+                        timestamp=datetime.now(tzlocal())
                     )
                     db.add(transaction)
 

@@ -40,11 +40,13 @@ class Instrument(BaseModel):
 
 class Ok(BaseModel):
     status: bool = True
+
+from pydantic import AwareDatetime
 class Transaction(BaseModel):
     ticker: str
     amount: int
     price: int
-    timestamp: str
+    timestamp: AwareDatetime
 
 class Body_withdraw_api_v1_admin_balance_withdraw_post(BaseModel):
     user_id: UUID

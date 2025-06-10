@@ -1,3 +1,20 @@
+-- Полная очистка базы данных (выполняется в обратном порядке из-за зависимостей)
+DROP TABLE IF EXISTS orderbook CASCADE;
+DROP TABLE IF EXISTS balances CASCADE;
+DROP TABLE IF EXISTS order_req CASCADE;
+DROP TABLE IF EXISTS market_orders CASCADE;
+DROP TABLE IF EXISTS limit_orders CASCADE;
+DROP TABLE IF EXISTS withdraw CASCADE;
+DROP TABLE IF EXISTS transactions CASCADE;
+DROP TABLE IF EXISTS instruments CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
+
+-- Удаление типов, если они существуют
+DROP TYPE IF EXISTS user_role;
+DROP TYPE IF EXISTS order_status;
+DROP TYPE IF EXISTS order_direction;
+
+
 CREATE TYPE user_role AS ENUM ('USER', 'ADMIN');
 
 CREATE TYPE order_status AS ENUM ('NEW', 'EXECUTED', 'PARTIALLY_EXECUTED', 'CANCELLED');
@@ -24,7 +41,7 @@ CREATE TABLE if not exists transactions (
                               ticker VARCHAR(10) NOT NULL REFERENCES instruments(ticker) ON DELETE CASCADE,
                               amount INT NOT NULL,
                               price INT NOT NULL,
-                              timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                              timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create Withdraw Requests TABLE if not exists

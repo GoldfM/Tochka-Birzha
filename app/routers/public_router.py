@@ -46,7 +46,6 @@ async def fetch_all_instruments(database: AsyncSession = Depends(get_db)):
     query_result = await database.execute(select(Instrument_db))
     return query_result.scalars().all()
 
-
 @router.get("/orderbook/{ticker}", response_model=L2OrderBook)
 async def fetch_orderbook_data(
         ticker: str,
@@ -59,14 +58,32 @@ async def fetch_orderbook_data(
     orderbook_query = select(OrderBook_db).where(OrderBook_db.ticker == ticker)
     orderbook_data = (await db_connection.scalars(orderbook_query)).first()
 
-    if orderbook_data:
-        return L2OrderBook(
-            bid_levels=[Level(**l) for l in orderbook_data.bid_levels][:depth],
-            ask_levels=[Level(**l) for l in orderbook_data.ask_levels][:depth]
-        )
-    else:
+    if not orderbook_data:
         raise HTTPException(status_code=404, detail="Orderbook not found")
 
+    def aggregate_levels(levels):
+        aggregated = {}
+        for level in levels:
+            price = level["price"]
+            if price in aggregated:
+                aggregated[price]["qty"] += level["qty"]
+                # Можно также агрегировать другие поля если нужно
+            else:
+                aggregated[price] = level.copy()
+        return sorted(aggregated.values(), key=lambda x: x["price"])
+
+    # Агрегируем уровни перед возвратом
+    bid_levels = aggregate_levels(orderbook_data.bid_levels)
+    ask_levels = aggregate_levels(orderbook_data.ask_levels)
+
+    # Сортируем bid по убыванию цены, ask по возрастанию
+    bid_levels_sorted = sorted(bid_levels, key=lambda x: -x["price"])
+    ask_levels_sorted = sorted(ask_levels, key=lambda x: x["price"])
+
+    return L2OrderBook(
+        bid_levels=[Level(**l) for l in bid_levels_sorted][:depth],
+        ask_levels=[Level(**l) for l in ask_levels_sorted][:depth]
+    )
 @router.get("/transactions/{ticker}", response_model=List[Transaction])
 async def retrieve_transaction_history(
         ticker: str,
@@ -84,7 +101,7 @@ async def retrieve_transaction_history(
     )
 
     transactions = (await db.execute(history_query)).scalars().all()
-
+    print(transactions[0].timestamp.isoformat())
     return [
         Transaction(
             ticker=t.ticker,

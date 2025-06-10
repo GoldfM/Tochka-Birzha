@@ -8,4 +8,4 @@ class Transaction_db(Base):
     ticker = Column(String(10), ForeignKey("instruments.ticker"), nullable=False)
     amount = Column(Integer, nullable=False)
     price = Column(Integer, nullable=False)
-    timestamp = Column(DateTime, nullable=False, server_default=func.now())
+    timestamp = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
